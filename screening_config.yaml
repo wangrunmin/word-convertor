@@ -22,6 +22,7 @@ interfaces:
       backoff_base: 1.0                 # 指数退避基数（秒）；实际等待带随机抖动
     enabled: true
     payload_extra: {}                   # 该接口每次请求都要附带的额外 payload 字段
+    # parser: keypoint                  # 导出器用：keypoint（重点纠错/风险防控）| law_quote（法律纠错）
 
   # ── 示例接口 B ────────────────────────────────────────────────
   B:
@@ -38,6 +39,7 @@ interfaces:
       backoff_base: 1.5
     enabled: true
     payload_extra: {}
+    # parser: law_quote                 # 导出器用：见接口 A 的注释说明
 
   # ── 如何新增接口 C ────────────────────────────────────────────
   # C:
