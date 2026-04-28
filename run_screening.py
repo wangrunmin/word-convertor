@@ -60,7 +60,8 @@ PID_FILENAME     = ".screening.pid"
 STATS_FILENAME   = "_stats.json"
 FAILED_FILENAME  = "_failed.txt"
 LAST_RUN_FILE    = ".last_run.yaml"
-CONFIG_FILE      = "screening_config.yaml"
+CONFIG_FILE       = "screening_config.yaml"
+CONFIG_FILE_LOCAL = "screening_config.local.yaml"
 DEFAULT_WORKERS  = 4
 DEFAULT_TIMEOUT  = 30
 DEFAULT_RETRY    = {"max": 3, "backoff_base": 1.0}
@@ -88,6 +89,11 @@ def find_missing_env(yaml_text: str) -> List[str]:
     """扫描 yaml 文本，返回引用了但未设置的环境变量名（去重）"""
     names = ENV_RE.findall(yaml_text)
     return [n for n in dict.fromkeys(names) if os.environ.get(n) is None]
+
+def resolve_config_path() -> Path:
+    """优先使用 .local.yaml，不存在时回退到普通配置。"""
+    local = Path(CONFIG_FILE_LOCAL)
+    return local if local.exists() else Path(CONFIG_FILE)
 
 def load_config(config_path: Path) -> Dict:
     if not HAS_YAML:
@@ -730,10 +736,10 @@ def cmd_run(args):
     if not HAS_YAML:
         die("缺少 PyYAML，请先：pip install PyYAML")
 
-    config_path = Path(CONFIG_FILE)
+    config_path = resolve_config_path()
     if not config_path.exists():
         print_welcome()
-        wizard_gen_config(config_path)
+        wizard_gen_config(Path(CONFIG_FILE))
         return
 
     config = load_config(config_path)
@@ -1006,9 +1012,9 @@ def cmd_doctor(_args):
             ok = False
 
     # 配置文件
-    cp = Path(CONFIG_FILE)
+    cp = resolve_config_path()
     if cp.exists():
-        print(f"  ✓ {CONFIG_FILE} 存在")
+        print(f"  ✓ {cp.name} 存在")
         try:
             raw_yaml = cp.read_text(encoding="utf-8")
             missing  = find_missing_env(raw_yaml)
@@ -1048,7 +1054,7 @@ def cmd_doctor(_args):
             print(f"  ✗ 配置文件解析失败: {e}")
             ok = False
     else:
-        print(f"  ✗ {CONFIG_FILE} 不存在  →  运行 python run_screening.py 生成")
+        print(f"  ✗ {CONFIG_FILE} / {CONFIG_FILE_LOCAL} 均不存在  →  运行 python run_screening.py 生成")
         ok = False
 
     print()
