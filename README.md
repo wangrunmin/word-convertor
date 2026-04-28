@@ -1,6 +1,6 @@
 # word-convertor
 
-中文文档批量入库流水线：把任意 Office 文档转成 `.docx`，再提取为下游评审服务消费的 JSON。
+中文文档批量入库流水线：把任意 Office 文档转成 `.docx`，再提取为 JSON，最后驱动多个筛查 HTTP 接口采集原始返回。
 
 ```
 任意文档 (.doc / .wps / .ofd / .rtf / .txt / .pdf)
@@ -10,9 +10,12 @@
     │  export_docx_to_json.py  （Python，跨平台）
     ▼
 JSON：{ judgeId, errorCorrectionType, paragraphs:[{index, content}] }
+    │  run_screening.py         （Python，跨平台）
+    ▼
+screening.sqlite：每篇 × 每个接口的原始 HTTP 返回
 ```
 
-两个阶段相互独立，可以单独使用。
+三个阶段相互独立，可以单独使用。
 
 ---
 
@@ -137,12 +140,166 @@ python export_docx_to_json.py -i D:\docx -o D:\json -w 8 -r
 
 ---
 
+---
+
+## 阶段三：筛查采集（`run_screening.py`）
+
+跨平台，依赖：
+
+```bash
+pip install httpx PyYAML tqdm   # tqdm 可选，缺失自动降级
+```
+
+### 快速上手
+
+**不传任何参数直接运行**，进入交互向导（推荐新手）：
+
+```bash
+python run_screening.py
+```
+
+向导会引导完成：接口配置生成（首次）→ 输入目录 → 输出目录 → 接口选择 → 前台/后台运行。
+
+### 命令行用法
+
+```bash
+# 前台运行（看进度条）
+python run_screening.py run -i json/ -o screen_out/
+
+# 只跑指定接口（接口名来自 screening_config.yaml 的 key）
+python run_screening.py run -i json/ -o screen_out/ --interface A,B
+
+# 后台运行（SSH 断开也继续）
+python run_screening.py run -i json/ -o screen_out/ --detach
+
+# 复用上次的交互选择
+python run_screening.py run --replay
+
+# 强制重跑（默认是断点续跑）
+python run_screening.py run -i json/ -o screen_out/ --force
+```
+
+### 后台任务管理
+
+```bash
+# 查看进度
+python run_screening.py status -o screen_out/
+
+# 实时日志
+python run_screening.py logs -o screen_out/ -f
+
+# 优雅停止（当前批次写完后退出）
+python run_screening.py stop -o screen_out/
+```
+
+### 健康检查
+
+```bash
+python run_screening.py doctor
+# ✓ Python 3.11
+# ✓ httpx / PyYAML 已安装
+# ○ tqdm 未安装（无进度条，不影响主流程）
+# ✓ screening_config.yaml 存在
+# ✓ 接口 A: SCREENING_A_TOKEN 已设置
+# ✗ 接口 B: connect timeout（可能原因：服务未启动 / VPN 未连）
+```
+
+### 输出说明
+
+所有产物落在 `-o` 指定的输出目录：
+
+```
+screen_out/
+├── screening.sqlite     # 主存储（每篇 × 每接口的原始返回）
+├── screening.log        # 日志
+├── _stats.json          # 实时进度统计
+└── _failed.txt          # 失败任务（doc\tinterface\tstatus_code\treason）
+```
+
+`screening.sqlite` 的 schema：
+
+```sql
+CREATE TABLE screening_result (
+    doc_path     TEXT NOT NULL,   -- 输入 JSON 相对路径
+    interface    TEXT NOT NULL,   -- 接口名（yaml 中的 key）
+    status       TEXT NOT NULL,   -- success | failed
+    raw_response TEXT,            -- 接口原始 JSON 字符串
+    error        TEXT,
+    http_status  INTEGER,
+    attempts     INTEGER NOT NULL,
+    elapsed_ms   INTEGER NOT NULL,
+    fetched_at   TEXT NOT NULL,
+    PRIMARY KEY (doc_path, interface)
+);
+```
+
+**断点续跑**：任何中断后直接重跑，已成功的行自动跳过。
+
+### 下游取数据示例（SQL）
+
+```python
+import sqlite3, json
+conn = sqlite3.connect("screen_out/screening.sqlite")
+
+# 取某接口全部成功结果
+rows = conn.execute(
+    "SELECT doc_path, raw_response FROM screening_result WHERE interface=? AND status='success'",
+    ("A",)
+).fetchall()
+for doc_path, raw in rows:
+    data = json.loads(raw)
+    # ... 解析 data
+
+# 统计各接口成功/失败数
+conn.execute("""
+    SELECT interface, status, COUNT(*) as cnt
+    FROM screening_result GROUP BY interface, status
+""").fetchall()
+```
+
+### 接口配置（`screening_config.yaml`）
+
+接口数量、URL、鉴权、并发数全部由此文件决定，代码内无硬编码。首次运行会自动生成配置模板，也可以手动编辑：
+
+```yaml
+interfaces:
+  A:
+    url: "${SCREENING_A_URL}"      # 支持 ${ENV_VAR} 占位
+    method: POST
+    auth:
+      type: bearer
+      token_env: SCREENING_A_TOKEN
+    workers: 8
+    timeout: 30
+    enabled: true
+```
+
+真实 URL / token 存入环境变量，不要写死在配置文件里。
+
+### 导出子命令
+
+```bash
+# 导出某篇所有接口的原始返回为文件
+python run_screening.py dump --doc path/to/doc.json -o exported/
+
+# 导出某接口全部失败任务
+python run_screening.py dump --interface A --status failed -o failed_A/
+
+# 导出全部
+python run_screening.py dump --all -o exported/
+```
+
+---
+
 ## 仓库结构
 
 ```
 word-convertor/
 ├── convert2docxByWps.ps1   # 阶段一：WPS COM 批量转 docx
 ├── export_docx_to_json.py  # 阶段二：docx → JSON
+├── run_screening.py        # 阶段三：筛查接口采集器
+├── screening_config.yaml   # 阶段三接口配置模板（可提交）
+├── requirements.txt        # Python 依赖
 ├── lib/                    # 首次运行后自动出现，缓存 PdfPig DLL
 └── CLAUDE.md               # 给 Claude Code 的项目说明
 ```

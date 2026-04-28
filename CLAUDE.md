@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库定位
 
-中文文档批量入库流水线，两阶段：
+中文文档批量入库流水线，三阶段：
 
 ```
 任意文档 (.doc/.wps/.ofd/.rtf/.txt/.pdf)
@@ -14,9 +14,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     │  export_docx_to_json.py  （Python）
     ▼
 JSON: { judgeId, errorCorrectionType, paragraphs:[{index, content}] }
+    │  run_screening.py         （Python）
+    ▼
+screening.sqlite：每篇 × 每接口的原始 HTTP 返回
 ```
 
-阶段一只能在 Windows 上跑（依赖 WPS COM）；阶段二跨平台，但通常消费阶段一的产物。
+阶段一只能在 Windows 上跑（依赖 WPS COM）；阶段二、三跨平台。
 用户面向的使用说明在 `README.md`。
 
 ## 常用命令
@@ -51,6 +54,32 @@ python export_docx_to_json.py \
 
 不传参数则进入交互模式，逐项询问。
 
+### 阶段三 — 筛查采集（Python 3）
+
+```bash
+pip install httpx PyYAML tqdm
+
+# 不传参数 → 交互向导（生成配置、选目录、选接口、选前台/后台）
+python run_screening.py
+
+# 直接运行
+python run_screening.py run -i json/ -o screen_out/
+
+# 后台运行
+python run_screening.py run -i json/ -o screen_out/ --detach
+
+# 查进度 / 看日志 / 停止
+python run_screening.py status -o screen_out/
+python run_screening.py logs   -o screen_out/ -f
+python run_screening.py stop   -o screen_out/
+
+# 健康检查（依赖、环境变量、接口连通性）
+python run_screening.py doctor
+
+# 导出 SQLite 行为文件（供下游消费）
+python run_screening.py dump --all -o exported/
+```
+
 ## 架构要点
 
 ### 阶段一（`convert2docxByWps.ps1`，约 1100 行）
@@ -76,6 +105,19 @@ python export_docx_to_json.py \
 - **`.docm` 被改名为 `.docx` 的兼容补丁**：python-docx 看到 `[Content_Types].xml` 里的 `macroEnabled` 会拒绝打开。脚本把 zip 复制到临时文件，把宏文档相关的 content type 字符串替换成普通 docx 的，再打开。**不要简化掉这段**，真实输入里这种文件很常见。
 - **空白字符集是 `' \t\n\r\x0b\x0c\xa0\x07'`**：`\xa0`（不间断空格）和 `\x07`（BEL，WPS 转换出来的表格单元格分隔符）都是有意保留的。
 - 文件名以 `~$` 开头的（Office 锁文件）扫描阶段就会过滤；`.doc` 和 `.wps` 这里**不支持**，必须先经阶段一处理 —— 脚本会提示跳过的后缀但不会报错。
+
+### 阶段三（`run_screening.py`）
+
+定位：**只做采集和存储**，不 merge、不解析接口返回、不出报告。下游读 SQLite 自行处理。
+
+- **接口数由 `screening_config.yaml` 决定**，代码内无任何接口硬编码。接口名是 yaml 顶层 key；`--interface A,B` 是 yaml key 的子集过滤。
+- **每个接口独立 worker pool**：`asyncio.Queue(maxsize=workers×4)` + feeder 协程 + N 个 worker 协程，所有接口的 task 共用一个 event loop，互不阻塞。慢接口不会拖累快接口（不存在木桶效应）。
+- **单 writer 协程串行写 SQLite**：所有接口 worker 把结果丢进共享 `result_q`（asyncio.Queue），1 个 writer 消费并执行 `INSERT OR REPLACE`。配合 `PRAGMA journal_mode=WAL`，读不阻塞写。
+- **`(doc_path, interface)` 主键保证断点续跑**：每个 task 开跑前查主键，`status='success'` 就跳过；`--force` 强制 `INSERT OR REPLACE`。任何中断（Ctrl+C / SIGTERM / OOM kill）后直接重跑接续。
+- **`--detach` 后台守护**：POSIX 走 double-fork + `setsid`；Windows 走 `subprocess.Popen(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)` 重启自身。PID 写入 `<outdir>/.screening.pid`，`status`/`logs`/`stop` 子命令依赖它。
+- **不传参数必然进入交互向导**：`len(sys.argv) == 1` 直接调 `cmd_run(_Stub())`，向导引导生成配置 → 选输入目录 → 选输出目录 → 选接口 → 前台/后台。
+- **存储模式**：默认 SQLite（`screen_out/screening.sqlite`）；`--storage=files` 退化为 `<doc>.<interface>.json` 散文件，仅供 <1000 篇小批量调试。`dump` 子命令按需把 SQLite 行导出成文件交给下游。
+- **`${ENV_VAR}` 展开**：yaml 加载后递归替换所有字符串中的 `${VAR}` 占位，未设置的环境变量在 `doctor` 里报告，不硬退出（`enabled: false` 的接口不检查）。
 
 ## 踩坑记录（`export_docx_to_json.py` 文件头，标注 2026-04-28）
 

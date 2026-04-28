@@ -1,0 +1,55 @@
+# 筛查接口配置文件
+# 每次新增接口只需在 interfaces 下追加一个 key，代码无需改动。
+#
+# 真实 URL / token 请走环境变量（${ENV_VAR} 占位），或另存为本地
+# screening_config.local.yaml（已加入 .gitignore，不会进 git）。
+#
+# 运行前检查：python run_screening.py doctor
+
+interfaces:
+
+  # ── 示例接口 A ────────────────────────────────────────────────
+  A:
+    url: "${SCREENING_A_URL}"          # 环境变量占位，例如 http://host:8080/api/check
+    method: POST                        # POST | GET（通常是 POST）
+    auth:
+      type: bearer                      # bearer | header | none
+      token_env: SCREENING_A_TOKEN      # 存放 Bearer Token 的环境变量名
+    workers: 8                          # 该接口最大并发请求数
+    timeout: 30                         # 单次请求超时秒数
+    retry:
+      max: 3                            # 最多重试次数（首次调用不算在内）
+      backoff_base: 1.0                 # 指数退避基数（秒）；实际等待带随机抖动
+    enabled: true
+    payload_extra: {}                   # 该接口每次请求都要附带的额外 payload 字段
+
+  # ── 示例接口 B ────────────────────────────────────────────────
+  B:
+    url: "${SCREENING_B_URL}"
+    method: POST
+    auth:
+      type: header                      # 自定义请求头鉴权
+      header_name: X-Api-Key
+      header_env: SCREENING_B_API_KEY
+    workers: 4
+    timeout: 60
+    retry:
+      max: 3
+      backoff_base: 1.5
+    enabled: true
+    payload_extra: {}
+
+  # ── 如何新增接口 C ────────────────────────────────────────────
+  # C:
+  #   url: "http://localhost:9090/api/screen"
+  #   method: POST
+  #   auth:
+  #     type: none
+  #   workers: 2
+  #   timeout: 30
+  #   retry:
+  #     max: 2
+  #     backoff_base: 1.0
+  #   enabled: false                    # 先设 false，调通后改 true
+  #   payload_extra:
+  #     model: "v2"                     # 固定要传的额外字段
