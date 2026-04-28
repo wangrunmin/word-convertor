@@ -149,7 +149,7 @@ def parse_keypoint(raw: dict, row: dict) -> Generator:
             "修改建议": item.get("suggestion", ""),
             "原文":     idx.get("originalText") or idx.get("pcOriginalText", ""),
             "纠错依据": item.get("tip", ""),
-            "定位":     idx.get("pluginsIndex", ""),
+            "定位":     idx.get("index", ""),
         }
 
 
@@ -180,7 +180,7 @@ def parse_law_quote(raw: dict, row: dict) -> Generator:
             "修改建议": (law + sugg_tiao).strip() or item.get("proposal", ""),
             "原文":     idx.get("pcOriginalText", ""),
             "纠错依据": item.get("tip", ""),
-            "定位":     idx.get("pluginsIndex", ""),
+            "定位":     idx.get("index", ""),
         }
 
 
