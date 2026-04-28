@@ -7,6 +7,9 @@
 .PARAMETER Recurse       是否递归（默认开启）
 .PARAMETER ThrottleLimit 并行 Worker 数（默认 4）
 .PARAMETER LogFile       日志路径
+
+.NOTES
+    是否把本脚本转 Python 的决策记录见 CLAUDE.md → "已否决的演进方向"
 #>
 
 param(

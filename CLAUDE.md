@@ -157,3 +157,19 @@ python export_screening_report.py --format csv
 
 1. 不要试图模拟 WPS 的精确分句逻辑。它带状态且不稳定，上面的正则是已对齐的近似方案。
 2. 凡是能直接读 `.docx` zip 完成的工作，都不要走 WPS COM。COM 慢约 100 倍，且所有调用都要排队过同一个 Office 进程。
+
+## 已否决的演进方向（避免反复重提）
+
+每条记录格式：决策 · 日期 · 理由 · 何时重新评估。
+
+### 阶段一（`convert2docxByWps.ps1`）不迁移到 Python · 2026-04-28
+
+**决策**：保留 PowerShell，不用 `pywin32` 重写。
+
+**理由**：
+1. **并发模型**：PowerShell `Runspace Pool` 是同进程多线程，每个 Runspace 持长生命周期 STA COM 实例，初始化几乎零开销。Python 多线程受 GIL + COM 线程亲和性约束；多进程每个 worker 都要单独起 WPS COM，启动开销 ×N。此场景 PowerShell 是甜蜜点。
+2. **无迁移收益**：PdfPig / ImportExcel / 命名 Mutex / 内联 C# `AtomicCounter` 都有 Python 等价物，但阶段一输出 `.docx`，对下游语言中性，统一技术栈不会让阶段二/三/四变好写。
+3. **踩坑不可漏**：COM 死锁 60s 超时、`PK\x03\x04` 魔数嗅探、宏文档伪装 `.docx`、ZIP GBK 解压、可选能力静默降级 —— 全是真实事故留下的补丁，重写要逐条迁移，漏一个就是线上事故，且 bug 现场（真实用户文档）复现成本高。
+4. **ROI 为负**：迁移约 1-2 周开发 + 数周稳定性观察，没有"必须 Python"的硬约束（如嵌入 Python 长驻服务）就不值得。
+
+**何时重新评估**：(a) 要把转换能力嵌入更大的 Python 服务；(b) 决定砍掉 WPS、改用纯 Python 库（但届时不再是"转 docx"，而是另一条技术路线）。
