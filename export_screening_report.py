@@ -215,19 +215,22 @@ def fill_document_meta(conn: sqlite3.Connection, doc_paths: List[str],
         return
 
     print(f"  需要扫描 {len(todo)} 篇文档（已缓存 {len(doc_paths) - len(todo)} 篇）")
-    now = datetime.now().isoformat(timespec="seconds")
+    now   = datetime.now().isoformat(timespec="seconds")
+    sql   = ("INSERT OR REPLACE INTO document_meta(doc_path, court, case_num, scanned_at) "
+             "VALUES (?, ?, ?, ?)")
+    batch: list = []
     for rel in tqdm(todo, desc="提取法院/案号"):
         try:
-            text = (input_dir / Path(rel)).read_text(encoding="utf-8")
-            data = json.loads(text)
+            data = json.loads((input_dir / Path(rel)).read_text(encoding="utf-8"))
             court, case_num = extract_court_and_case(data.get("paragraphs") or [])
         except Exception:
             court, case_num = "", ""
-        conn.execute(
-            "INSERT OR REPLACE INTO document_meta(doc_path, court, case_num, scanned_at) "
-            "VALUES (?, ?, ?, ?)",
-            (rel, court, case_num, now),
-        )
+        batch.append((rel, court, case_num, now))
+        if len(batch) >= 500:
+            conn.executemany(sql, batch)
+            batch.clear()
+    if batch:
+        conn.executemany(sql, batch)
     conn.commit()
     print(f"  ✓ 元数据缓存已更新（{len(todo)} 篇）")
 
@@ -278,37 +281,40 @@ def _style_header(ws, headers: list):
 
 
 def _autowidth(ws, headers: list):
-    for ci, h in enumerate(headers, 1):
-        letter  = get_column_letter(ci)
-        max_len = len(h)
-        for row in ws.iter_rows(min_row=2, min_col=ci, max_col=ci):
-            for cell in row:
-                if cell.value:
-                    max_len = max(max_len, min(len(str(cell.value)), 80))
-        ws.column_dimensions[letter].width = max(max_len + 2, 8)
+    widths = [len(h) for h in headers]
+    for row in ws.iter_rows(min_row=2):
+        for ci, cell in enumerate(row):
+            if ci < len(widths) and cell.value:
+                widths[ci] = max(widths[ci], min(len(str(cell.value)), 80))
+    for ci, w in enumerate(widths):
+        ws.column_dimensions[get_column_letter(ci + 1)].width = max(w + 2, 8)
 
 
-def _row_styles(ws, headers: list, status_col: Optional[str] = None):
+def _row_styles(ws, headers: list, status_col: Optional[str] = None,
+                fill_all: Optional[str] = None):
     alt  = _fill(ALT_FILL)
     ok   = _fill(OK_FILL)
     err  = _fill(ERR_FILL)
+    forced = _fill(fill_all) if fill_all else None
+    wrap_align   = Alignment(wrap_text=True,  vertical="top")
+    normal_align = Alignment(wrap_text=False, vertical="top")
     sidx = (headers.index(status_col) + 1) if status_col and status_col in headers else None
     for ri, row in enumerate(ws.iter_rows(min_row=2), start=2):
-        sv = str(row[sidx - 1].value or "") if sidx else ""
-        if sv == "success":
-            fill = ok
-        elif sv == "failed":
-            fill = err
-        elif ri % 2 == 0:
-            fill = alt
+        if forced:
+            fill = forced
         else:
-            fill = None
+            sv = str(row[sidx - 1].value or "") if sidx else ""
+            if sv == "success":
+                fill = ok
+            elif sv == "failed":
+                fill = err
+            elif ri % 2 == 0:
+                fill = alt
+            else:
+                fill = None
         for ci, cell in enumerate(row, 1):
             col_name = headers[ci - 1] if ci <= len(headers) else ""
-            cell.alignment = Alignment(
-                wrap_text=(col_name in WRAP_COLS),
-                vertical="top",
-            )
+            cell.alignment = wrap_align if col_name in WRAP_COLS else normal_align
             if fill:
                 cell.fill = fill
 
@@ -383,16 +389,13 @@ def write_issues(ws, issues: list):
 def write_failed(ws, failed_rows: list):
     ws.title = "失败列表"
     _style_header(ws, FAILED_COLUMNS)
-    ef = _fill(ERR_FILL)
     for r in failed_rows:
         ws.append([
             r["doc_path"], r.get("court", ""), r.get("case_num", ""),
             r["interface"], r["status"], r.get("http_status"),
             r.get("attempts"), r.get("fetched_at"), r.get("error") or "",
         ])
-    for row in ws.iter_rows(min_row=2):
-        for cell in row:
-            cell.fill = ef
+    _row_styles(ws, FAILED_COLUMNS, fill_all=ERR_FILL)
     _autowidth(ws, FAILED_COLUMNS)
 
 
