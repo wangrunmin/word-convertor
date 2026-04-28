@@ -1,21 +1,24 @@
 # word-convertor
 
-中文文档批量入库流水线：把任意 Office 文档转成 `.docx`，再提取为 JSON，最后驱动多个筛查 HTTP 接口采集原始返回。
+中文文档批量入库流水线：把任意 Office 文档转成 `.docx`，再提取为 JSON，驱动多个筛查 HTTP 接口采集原始返回，最终导出 Excel 报告。
 
 ```
 任意文档 (.doc / .wps / .ofd / .rtf / .txt / .pdf)
-    │  convert2docxByWps.ps1   （Windows + WPS Office）
+    │  convert2docxByWps.ps1         （Windows + WPS Office）
     ▼
 .docx
-    │  export_docx_to_json.py  （Python，跨平台）
+    │  export_docx_to_json.py        （Python，跨平台）
     ▼
 JSON：{ judgeId, errorCorrectionType, paragraphs:[{index, content}] }
-    │  run_screening.py         （Python，跨平台）
+    │  run_screening.py               （Python，跨平台）
     ▼
 screening.sqlite：每篇 × 每个接口的原始 HTTP 返回
+    │  export_screening_report.py     （Python，跨平台）
+    ▼
+筛查报告.xlsx：总览 / 筛查结果 / 问题明细 / 失败列表
 ```
 
-三个阶段相互独立，可以单独使用。
+四个阶段相互独立，可以单独使用。
 
 ---
 
@@ -291,15 +294,76 @@ python run_screening.py dump --all -o exported/
 
 ---
 
+## 阶段四：导出报告（`export_screening_report.py`）
+
+跨平台，依赖：
+
+```bash
+pip install openpyxl PyYAML tqdm   # tqdm 可选
+```
+
+### 快速上手
+
+```bash
+# 不传参数 → 交互向导
+python export_screening_report.py
+
+# 直接运行（-i 指定阶段二 JSON 目录，首次运行时提取法院/案号并缓存到 SQLite）
+python export_screening_report.py -d screen_out/screening.sqlite -i json/ -o 筛查报告.xlsx
+
+# 刷新法院/案号缓存（提取规则改了时用）
+python export_screening_report.py -i json/ --rescan-meta
+
+# 过滤导出
+python export_screening_report.py --interface A --status success
+
+# 强制 CSV（openpyxl 缺失时自动降级，也可手动指定）
+python export_screening_report.py --format csv
+```
+
+### 输出说明
+
+默认输出 `筛查报告_<时间戳>.xlsx`，包含四个 Sheet：
+
+| Sheet | 内容 |
+| --- | --- |
+| 总览 | 文档数、各接口成功/失败/问题数统计 |
+| 筛查结果 | 每篇 × 每接口一行，含状态/耗时/问题数 |
+| 问题明细 | 每条问题一行，18 列统一 schema（含法院、案号） |
+| 失败列表 | 仅失败行 + 原因 |
+
+xlsx 写入失败时自动降级为 CSV（UTF-8-BOM，Excel 双击不乱码）。
+
+### 接口 → 解析器映射
+
+在 `screening_config.yaml` 每个接口下加一行 `parser` 字段，导出器据此分发解析逻辑：
+
+```yaml
+interfaces:
+  A:
+    parser: keypoint      # 重点纠错 / 风险防控（解析 corrections[]）
+  B:
+    parser: law_quote     # 法律纠错（解析 lawQuotes[]）
+```
+
+未配置 `parser` 的接口只进"筛查结果" Sheet，不进"问题明细"。
+
+### 法院 / 案号
+
+首次运行时（需要 `-i` 参数），脚本扫描全部 JSON 文件，用宽松正则从前 20 段提取法院名和案号，缓存到 `screening.sqlite` 的 `document_meta` 表。后续导出直接 JOIN，不再读 JSON 文件。
+
+---
+
 ## 仓库结构
 
 ```
 word-convertor/
-├── convert2docxByWps.ps1   # 阶段一：WPS COM 批量转 docx
-├── export_docx_to_json.py  # 阶段二：docx → JSON
-├── run_screening.py        # 阶段三：筛查接口采集器
-├── screening_config.yaml   # 阶段三接口配置模板（可提交）
-├── requirements.txt        # Python 依赖
-├── lib/                    # 首次运行后自动出现，缓存 PdfPig DLL
-└── CLAUDE.md               # 给 Claude Code 的项目说明
+├── convert2docxByWps.ps1          # 阶段一：WPS COM 批量转 docx
+├── export_docx_to_json.py         # 阶段二：docx → JSON
+├── run_screening.py               # 阶段三：筛查接口采集器
+├── export_screening_report.py     # 阶段四：筛查结果导出报告
+├── screening_config.yaml          # 阶段三/四接口配置模板（可提交）
+├── requirements.txt               # Python 依赖
+├── lib/                           # 首次运行后自动出现，缓存 PdfPig DLL
+└── CLAUDE.md                      # 给 Claude Code 的项目说明
 ```

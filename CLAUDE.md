@@ -4,22 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库定位
 
-中文文档批量入库流水线，三阶段：
+中文文档批量入库流水线，四阶段：
 
 ```
 任意文档 (.doc/.wps/.ofd/.rtf/.txt/.pdf)
-    │  convert2docxByWps.ps1   （Windows + WPS Office）
+    │  convert2docxByWps.ps1         （Windows + WPS Office）
     ▼
 .docx
-    │  export_docx_to_json.py  （Python）
+    │  export_docx_to_json.py        （Python）
     ▼
 JSON: { judgeId, errorCorrectionType, paragraphs:[{index, content}] }
-    │  run_screening.py         （Python）
+    │  run_screening.py               （Python）
     ▼
 screening.sqlite：每篇 × 每接口的原始 HTTP 返回
+    │  export_screening_report.py     （Python）
+    ▼
+筛查报告.xlsx：总览 / 筛查结果 / 问题明细 / 失败列表
 ```
 
-阶段一只能在 Windows 上跑（依赖 WPS COM）；阶段二、三跨平台。
+阶段一只能在 Windows 上跑（依赖 WPS COM）；阶段二、三、四跨平台。
 用户面向的使用说明在 `README.md`。
 
 ## 常用命令
@@ -80,6 +83,25 @@ python run_screening.py doctor
 python run_screening.py dump --all -o exported/
 ```
 
+### 阶段四 — 导出报告（Python 3）
+
+```bash
+pip install openpyxl PyYAML tqdm
+
+# 不传参数 → 交互向导
+python export_screening_report.py
+
+# 直接运行（-i 首次运行时扫描 JSON 提取法院/案号并缓存到 SQLite）
+python export_screening_report.py -d screen_out/screening.sqlite -i json/ -o 筛查报告.xlsx
+
+# 刷新法院/案号缓存
+python export_screening_report.py -i json/ --rescan-meta
+
+# 过滤导出 / 强制 CSV
+python export_screening_report.py --interface A --status success
+python export_screening_report.py --format csv
+```
+
 ## 架构要点
 
 ### 阶段一（`convert2docxByWps.ps1`，约 1100 行）
@@ -118,6 +140,16 @@ python run_screening.py dump --all -o exported/
 - **不传参数必然进入交互向导**：`len(sys.argv) == 1` 直接调 `cmd_run(_Stub())`，向导引导生成配置 → 选输入目录 → 选输出目录 → 选接口 → 前台/后台。
 - **存储模式**：默认 SQLite（`screen_out/screening.sqlite`）；`--storage=files` 退化为 `<doc>.<interface>.json` 散文件，仅供 <1000 篇小批量调试。`dump` 子命令按需把 SQLite 行导出成文件交给下游。
 - **`${ENV_VAR}` 展开**：yaml 加载后递归替换所有字符串中的 `${VAR}` 占位，未设置的环境变量在 `doctor` 里报告，不硬退出（`enabled: false` 的接口不检查）。
+
+### 阶段四（`export_screening_report.py`）
+
+定位：**只做"SQLite → Excel/CSV"**，不发请求、不修改 SQLite（除写入 `document_meta` 缓存外）、不做去重合并。
+
+- **接口 → parser 映射由 `screening_config.yaml` 决定**：每个接口下加 `parser: keypoint`（重点纠错/风险防控，解析 `corrections[]`）或 `parser: law_quote`（法律纠错，解析 `lawQuotes[]`）。未配置 `parser` 的接口只进"筛查结果" Sheet，不进"问题明细"，不会报错。
+- **两种 parser 的 18 列 schema 完全对齐**：`court/case_num` 来自 `document_meta`；法院/条文/建议表述 仅 `law_quote` 填，`keypoint` 留空。
+- **法院/案号缓存（`document_meta` 表）**：首次导出时扫描 input JSON，宽松正则提取，`INSERT OR IGNORE` 写入同一 SQLite 文件；后续导出 `LEFT JOIN` 复用，`--rescan-meta` 强制重扫。`executemany` 500 条一批写入。
+- **openpyxl 降级**：import 失败 → 直接 CSV；`PermissionError`（文件被 Excel 占用）→ 加 `_retry` 后缀重试；任何其他写入异常 → 降级 CSV（`utf-8-sig`，4 个 Sheet 各一个文件）。
+- **xlsx 样式**：`_row_styles()` 支持 `status_col`（按值着色）和 `fill_all`（统一着色，失败列表用）；`_autowidth()` 单次遍历所有列（非每列一次全表扫描）；Alignment 对象预缓存（wrap / normal 各一个）。
 
 ## 踩坑记录（`export_docx_to_json.py` 文件头，标注 2026-04-28）
 
