@@ -135,7 +135,9 @@ python export_screening_report.py --format csv
 - **接口数由 `screening_config.yaml` 决定**，代码内无任何接口硬编码。接口名是 yaml 顶层 key；`--interface A,B` 是 yaml key 的子集过滤。
 - **每个接口独立 worker pool**：`asyncio.Queue(maxsize=workers×4)` + feeder 协程 + N 个 worker 协程，所有接口的 task 共用一个 event loop，互不阻塞。慢接口不会拖累快接口（不存在木桶效应）。
 - **单 writer 协程串行写 SQLite**：所有接口 worker 把结果丢进共享 `result_q`（asyncio.Queue），1 个 writer 消费并执行 `INSERT OR REPLACE`。配合 `PRAGMA journal_mode=WAL`，读不阻塞写。
-- **`(doc_path, interface)` 主键保证断点续跑**：每个 task 开跑前查主键，`status='success'` 就跳过；`--force` 强制 `INSERT OR REPLACE`。任何中断（Ctrl+C / SIGTERM / OOM kill）后直接重跑接续。
+- **`(doc_path, interface)` 主键保证断点续跑与失败重跑**：每个 task 开跑前查主键，**只有 `status='success'` 才跳过**；`failed` 记录和新增文件都会被重新执行。因此任何中断（Ctrl+C / SIGTERM / OOM kill）或部分失败后，直接再跑一次 `run` 即可接续，**不需要也不应该加 `--force`**（`--force` 会把成功记录也全部重做）。如需只处理某个接口的失败，加 `--interface <接口名>` 缩小范围。
+  - **排查失败原因**：失败记录同步写入 `<outdir>/_failed.txt`（`doc_path \t interface \t http_status \t error`），可直接 grep；也可查 SQLite：`SELECT doc_path, http_status, attempts, error FROM screening_result WHERE status='failed' AND interface='<接口名>';`。`error` 字段内容：HTTP 4xx 为 `"HTTP {code}: {body 前 500 字}"`，网络异常为 `"TimeoutException: ..."` 等。单篇内已自动退避重试（默认 3 次，体现在 `attempts` 字段），**`_failed.txt` 里的都是已重试过仍失败的**。
+  - **重跑命令示例**（只重做某接口的失败，不动其他接口的成功记录）：`python run_screening.py run -i json/ -o screen_out/ --interface 法律纠错`
 - **`--detach` 后台守护**：POSIX 走 double-fork + `setsid`；Windows 走 `subprocess.Popen(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)` 重启自身。PID 写入 `<outdir>/.screening.pid`，`status`/`logs`/`stop` 子命令依赖它。
 - **不传参数必然进入交互向导**：`len(sys.argv) == 1` 直接调 `cmd_run(_Stub())`，向导引导生成配置 → 选输入目录 → 选输出目录 → 选接口 → 前台/后台。
 - **存储模式**：默认 SQLite（`screen_out/screening.sqlite`）；`--storage=files` 退化为 `<doc>.<interface>.json` 散文件，仅供 <1000 篇小批量调试。`dump` 子命令按需把 SQLite 行导出成文件交给下游。
