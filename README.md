@@ -3,7 +3,7 @@
 中文文档批量入库流水线：把任意 Office 文档转成 `.docx`，再提取为 JSON，驱动多个筛查 HTTP 接口采集原始返回，最终导出 Excel 报告。
 
 ```
-任意文档 (.doc / .wps / .ofd / .rtf / .txt / .pdf)
+任意文档 (.doc / .wps / .ofd / .rtf / .txt / .html / .htm / .pdf)
     │  convert2docxByWps.ps1         （Windows + WPS Office）
     ▼
 .docx
@@ -54,7 +54,7 @@ powershell -ExecutionPolicy Bypass -File .\convert2docxByWps.ps1 `
 
 ### 输入支持
 
-- **目录**：递归扫描 `.doc / .docx / .wps / .ofd / .rtf / .txt / .pdf`
+- **目录**：递归扫描 `.doc / .docx / .wps / .ofd / .rtf / .txt / .html / .htm / .pdf`
 - **`.zip` 压缩包**：自动用 GBK（codepage 936）解压，避免国内压缩包的中文文件名乱码
 - **单文件**：复制到临时目录后按目录模式处理
 

@@ -349,7 +349,7 @@ except Exception:
 function Show-Welcome {
     Write-Host ""
     Write-Host "╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║       WPS 批量转 docx 工具  (支持 doc/wps/ofd/rtf/txt)    ║" -ForegroundColor Cyan
+    Write-Host "║ WPS 批量转 docx 工具 (支持 doc/wps/ofd/rtf/txt/html/htm) ║" -ForegroundColor Cyan
     Write-Host "╚══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
 }
@@ -452,7 +452,7 @@ else {
     Write-Host "检测到单个文件，按单文件模式处理"
 }
 
-$extSet     = @(".doc", ".docx", ".wps", ".ofd", ".rtf", ".txt")
+$extSet     = @(".doc", ".docx", ".wps", ".ofd", ".rtf", ".txt", ".html", ".htm")
 $startTime  = Get-Date
 $reportTime = $startTime.ToString("yyyyMMdd_HHmmss")
 

@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 中文文档批量入库流水线，四阶段：
 
 ```
-任意文档 (.doc/.wps/.ofd/.rtf/.txt/.pdf)
+任意文档 (.doc/.wps/.ofd/.rtf/.txt/.html/.htm/.pdf)
     │  convert2docxByWps.ps1         （Windows + WPS Office）
     ▼
 .docx
